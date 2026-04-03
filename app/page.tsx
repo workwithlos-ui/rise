@@ -25,8 +25,8 @@ function sevColor(s: string) {
   return T.sub;
 }
 
-function MetricCard({ label, value, prev, unit = '$' }: { label: string; value?: number; prev?: number; unit?: string }) {
-  const hasChange = value !== undefined && prev !== undefined && prev !== 0;
+function MetricCard({ label, value, prev, unit = '$' }: { label: string; value?: number | null; prev?: number | null; unit?: string }) {
+  const hasChange = value !== undefined && value !== null && prev !== undefined && prev !== null && prev !== 0;
   const pct = hasChange ? (((value! - prev!) / prev!) * 100) : 0;
   const up = pct >= 0;
   const fmt = (n: number) => unit === '$' ? `$${n.toLocaleString()}` : unit === '%' ? `${n}%` : `${n.toLocaleString()}`;
@@ -35,7 +35,7 @@ function MetricCard({ label, value, prev, unit = '$' }: { label: string; value?:
       style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: '18px 20px' }}>
       <p style={{ fontSize: 9, color: T.sub, letterSpacing: '0.12em', fontFamily: 'DM Mono, monospace', marginBottom: 10 }}>{label}</p>
       <p style={{ fontSize: 26, fontWeight: 800, color: T.text, fontFamily: 'DM Mono, monospace', lineHeight: 1 }}>
-        {value !== undefined ? fmt(value) : '--'}
+        {value !== undefined && value !== null ? fmt(value) : '--'}
       </p>
       {hasChange && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
@@ -73,6 +73,7 @@ export default function Dashboard() {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [noMetrics, setNoMetrics] = useState(false);
 
   useEffect(() => {
@@ -86,11 +87,53 @@ export default function Dashboard() {
 
   const runAnalysis = async () => {
     setAnalyzing(true);
+    setError(null);
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'insights' }) });
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'insights' }),
+      });
       const d = await res.json();
-      if (d.data) setInsights(Array.isArray(d.data) ? d.data.map((item: Insight, i: number) => ({ ...item, id: String(i), created_at: new Date().toISOString() })) : []);
-    } catch (e) { console.error(e); }
+
+      if (!res.ok) {
+        setError(d.error || 'Analysis failed');
+        setAnalyzing(false);
+        return;
+      }
+
+      if (d.data && Array.isArray(d.data)) {
+        const mapped = d.data.map((item: Insight, i: number) => ({
+          ...item,
+          id: String(i),
+          created_at: new Date().toISOString(),
+        }));
+        setInsights(mapped);
+
+        // Persist insights to the API so the Feed page can read them
+        try {
+          await fetch('/api/insights', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ insights: d.data, source: 'dashboard' }),
+          });
+        } catch (e) {
+          console.warn('Failed to persist insights to feed:', e);
+        }
+
+        // Also persist to localStorage as a fallback
+        try {
+          const existing = JSON.parse(localStorage.getItem('rise_insights') || '[]');
+          const combined = [...mapped, ...existing].slice(0, 50);
+          localStorage.setItem('rise_insights', JSON.stringify(combined));
+        } catch (e) {
+          console.warn('localStorage save failed:', e);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Network error. Please try again.');
+    }
     setAnalyzing(false);
   };
 
@@ -135,7 +178,7 @@ export default function Dashboard() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                 <div>
                   <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>Revenue Intelligence</h1>
-                  <p style={{ fontSize: 12, color: T.sub, marginTop: 4 }}>{c?.period_label ?? 'Latest period'} — {c?.created_at ? new Date(c.created_at).toLocaleDateString() : 'Now'}</p>
+                  <p style={{ fontSize: 12, color: T.sub, marginTop: 4 }}>{c?.snapshot_date ?? 'Latest period'} - {c?.created_at ? new Date(c.created_at).toLocaleDateString() : 'Now'}</p>
                 </div>
                 <button onClick={runAnalysis} disabled={analyzing} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px', background: analyzing ? T.border : T.accent, color: analyzing ? T.sub : T.bg, borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: analyzing ? 'not-allowed' : 'pointer', border: 'none', letterSpacing: '0.06em', transition: 'all 0.15s' }}>
                   {analyzing ? <><RefreshCw size={13} className="spin" /> ANALYZING...</> : <><Zap size={13} /> RUN ANALYSIS</>}
@@ -143,12 +186,18 @@ export default function Dashboard() {
               </div>
             </motion.div>
 
+            {error && (
+              <div style={{ padding: '12px 16px', background: `${T.red}15`, border: `1px solid ${T.red}30`, borderRadius: 8, marginBottom: 16 }}>
+                <p style={{ fontSize: 13, color: T.red }}>{error}</p>
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 32 }}>
               <MetricCard label="MONTHLY REVENUE" value={c?.monthly_revenue} prev={p?.monthly_revenue} />
               <MetricCard label="PIPELINE VALUE" value={c?.pipeline_value} prev={p?.pipeline_value} />
-              <MetricCard label="LTV" value={c?.ltv} prev={p?.ltv} />
-              <MetricCard label="CAC" value={c?.cac} prev={p?.cac} />
-              <MetricCard label="CHURN RATE" value={c?.churn_rate} prev={p?.churn_rate} unit="%" />
+              <MetricCard label="LTV" value={c?.customer_ltv} prev={p?.customer_ltv} />
+              <MetricCard label="CAC" value={c?.customer_cac} prev={p?.customer_cac} />
+              <MetricCard label="CHURN RATE" value={c?.monthly_churn_rate} prev={p?.monthly_churn_rate} unit="%" />
               <MetricCard label="CLOSE RATE" value={c?.close_rate} prev={p?.close_rate} unit="%" />
             </div>
 
@@ -156,7 +205,7 @@ export default function Dashboard() {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
                   <BarChart3 size={14} style={{ color: T.accent }} />
-                  <span style={{ fontSize: 10, color: T.accent, fontFamily: 'DM Mono, monospace', letterSpacing: '0.12em', fontWeight: 600 }}>INTELLIGENCE INSIGHTS</span>
+                  <span style={{ fontSize: 10, color: T.accent, fontFamily: 'DM Mono, monospace', letterSpacing: '0.12em', fontWeight: 600 }}>GRIP INTELLIGENCE INSIGHTS</span>
                   <span style={{ fontSize: 10, padding: '1px 6px', background: T.accentDim, border: `1px solid ${T.accent}25`, borderRadius: 3, color: T.accent, fontFamily: 'DM Mono, monospace' }}>{insights.length}</span>
                 </div>
                 {insights.map((ins, i) => <InsightCard key={ins.id} insight={ins} i={i} />)}
@@ -164,7 +213,7 @@ export default function Dashboard() {
             ) : (
               <div style={{ padding: 28, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, textAlign: 'center' }}>
                 <Zap size={24} style={{ color: T.accent, margin: '0 auto 12px' }} />
-                <p style={{ fontSize: 14, color: T.sub }}>Click "Run Analysis" to generate intelligence insights from your metrics.</p>
+                <p style={{ fontSize: 14, color: T.sub }}>Click &quot;Run Analysis&quot; to generate GRIP intelligence insights from your metrics.</p>
               </div>
             )}
           </>

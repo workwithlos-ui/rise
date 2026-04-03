@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getSharedContext, getLatestMetrics } from '@/lib/supabase';
 
+export const maxDuration = 60;
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const BENCHMARKS: Record<string, Record<string, number>> = {
@@ -11,10 +13,16 @@ const BENCHMARKS: Record<string, Record<string, number>> = {
   'Home Services': { margin: 35, cac: 120, ltv: 1800, churn: 12, close_rate: 40 },
 };
 
+function stripEmDashes(text: string): string {
+  return text.replace(/\u2014/g, '-').replace(/\u2013/g, '-');
+}
+
 export async function POST(req: Request) {
   try {
-    const { question, industry = 'Agency / Services', mode = 'insights' } = await req.json() as {
-      question?: string; industry?: string; mode?: 'insights' | 'deep';
+    const { question, industry = 'Agency / Services', mode = 'insights' } = (await req.json()) as {
+      question?: string;
+      industry?: string;
+      mode?: 'insights' | 'deep';
     };
 
     const [ctx, metricsArr] = await Promise.all([getSharedContext(), getLatestMetrics(2)]);
@@ -22,29 +30,42 @@ export async function POST(req: Request) {
     const previous = metricsArr[1] ?? null;
     const benchmarks = BENCHMARKS[industry] ?? BENCHMARKS['Agency / Services'];
 
-    const ctxBlock = ctx ? `
+    // Read GRIP weights from shared context (stored as spcl_weights column)
+    const gripWeights = ctx?.spcl_weights ?? {};
+
+    const ctxBlock = ctx
+      ? `
 BUSINESS CONTEXT (from shared_context table):
 ${JSON.stringify(ctx, null, 2)}
-` : 'No shared context loaded.';
 
-    const metricsBlock = current ? `
+GRIP SCORING WEIGHTS (Gravity, Reach, Impact, Proof): ${JSON.stringify(gripWeights, null, 2)}
+`
+      : 'No shared context loaded.';
+
+    const metricsBlock = current
+      ? `
 CURRENT METRICS (latest entry):
 Monthly Revenue: $${current.monthly_revenue?.toLocaleString() ?? 'N/A'}
-Ad Spend: $${current.ad_spend?.toLocaleString() ?? 'N/A'}
-LTV: $${current.ltv?.toLocaleString() ?? 'N/A'}
-CAC: $${current.cac?.toLocaleString() ?? 'N/A'}
-Churn Rate: ${current.churn_rate ?? 'N/A'}%
+Ad Spend: $${current.monthly_ad_spend?.toLocaleString() ?? 'N/A'}
+LTV: $${current.customer_ltv?.toLocaleString() ?? 'N/A'}
+CAC: $${current.customer_cac?.toLocaleString() ?? 'N/A'}
+Churn Rate: ${current.monthly_churn_rate ?? 'N/A'}%
 Pipeline Value: $${current.pipeline_value?.toLocaleString() ?? 'N/A'}
 Close Rate: ${current.close_rate ?? 'N/A'}%
 Avg Deal Size: $${current.avg_deal_size?.toLocaleString() ?? 'N/A'}
-${previous ? `
+${
+  previous
+    ? `
 PREVIOUS PERIOD METRICS:
 Monthly Revenue: $${previous.monthly_revenue?.toLocaleString() ?? 'N/A'}
-CAC: $${previous.cac?.toLocaleString() ?? 'N/A'}
-Churn: ${previous.churn_rate ?? 'N/A'}%
+CAC: $${previous.customer_cac?.toLocaleString() ?? 'N/A'}
+Churn: ${previous.monthly_churn_rate ?? 'N/A'}%
 Pipeline: $${previous.pipeline_value?.toLocaleString() ?? 'N/A'}
-` : 'No previous period data.'}
-` : 'No metrics available. User should add metrics via /setup.';
+`
+    : 'No previous period data.'
+}
+`
+      : 'No metrics available. User should add metrics via /setup.';
 
     const benchmarkBlock = `
 INDUSTRY BENCHMARKS (${industry}):
@@ -55,28 +76,50 @@ Churn: ${benchmarks.churn}% | Close Rate: ${benchmarks.close_rate}%
     const systemPrompt = `You are RISE, an elite AI revenue intelligence analyst. You have studied 10,000 growth-stage companies.
 You know this business's ICPs, proof bank, offers, and voice from shared_context. You run math on THEIR specific numbers, not generic advice.
 When you flag an anomaly, you reference which ICP segment is most affected and which proof-bank result is relevant.
+Use GRIP scoring (Gravity, Reach, Impact, Proof) to prioritize and weight your insights.
 Never give advice that ignores the shared context. Every insight must show the dollar impact.
-No em dashes. No generic startup language. Return ONLY valid JSON.`;
+Do not use em dashes anywhere. Use hyphens or commas instead. No generic startup language. Return ONLY valid JSON.`;
 
-    const userPrompt = mode === 'deep'
-      ? `${ctxBlock}\n${metricsBlock}\n${benchmarkBlock}\n\nQUESTION: ${question ?? 'Give me a full growth analysis'}\n\nReturn JSON: {"headline":"string","analysis":"string (500+ words, specific dollar math, no generic advice)","action_plan":["action 1","action 2","action 3","action 4","action 5"],"risks":["risk 1","risk 2"],"opportunities":["opp 1","opp 2"]}`
-      : `${ctxBlock}\n${metricsBlock}\n${benchmarkBlock}\n\nGenerate 4-6 intelligence insights. For each, identify anomalies, gaps vs benchmarks, and connect to ICP context from shared_context.\n\nReturn JSON array: [{"severity":"CRITICAL|WARNING|OPPORTUNITY|INFO","title":"string","body":"2-3 sentences with specific numbers and dollar impact","action":"one specific action with expected outcome","metric":"which metric","value":"current value","benchmark":"industry benchmark value"}]`;
+    const userPrompt =
+      mode === 'deep'
+        ? `${ctxBlock}\n${metricsBlock}\n${benchmarkBlock}\n\nQUESTION: ${question ?? 'Give me a full growth analysis'}\n\nReturn JSON: {"headline":"string","analysis":"string (500+ words, specific dollar math, no generic advice)","action_plan":["action 1","action 2","action 3","action 4","action 5"],"risks":["risk 1","risk 2"],"opportunities":["opp 1","opp 2"]}`
+        : `${ctxBlock}\n${metricsBlock}\n${benchmarkBlock}\n\nGenerate 4-6 intelligence insights. For each, identify anomalies, gaps vs benchmarks, and connect to ICP context from shared_context. Use GRIP scoring (Gravity, Reach, Impact, Proof) to rank by priority.\n\nReturn JSON array: [{"severity":"CRITICAL|WARNING|OPPORTUNITY|INFO","title":"string","body":"2-3 sentences with specific numbers and dollar impact","action":"one specific action with expected outcome","metric":"which metric","value":"current value","benchmark":"industry benchmark value"}]`;
 
-    const model = mode === 'deep' ? 'claude-opus-4-5' : 'claude-sonnet-4-20250514';
-    const completion = await anthropic.messages.create({
-      model,
-      max_tokens: mode === 'deep' ? 2500 : 1500,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
+    const model = mode === 'deep' ? 'claude-sonnet-4-20250514' : 'claude-sonnet-4-20250514';
 
-    const raw = completion.content[0].type === 'text' ? completion.content[0].text : '[]';
-    const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const result = JSON.parse(clean);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 50000);
 
-    return Response.json({ success: true, data: result, mode, timestamp: new Date().toISOString() });
+    try {
+      const completion = await anthropic.messages.create(
+        {
+          model,
+          max_tokens: mode === 'deep' ? 2500 : 1500,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        },
+        { signal: controller.signal }
+      );
+
+      clearTimeout(timeout);
+
+      const raw = completion.content[0].type === 'text' ? completion.content[0].text : '[]';
+      const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const result = JSON.parse(stripEmDashes(clean));
+
+      return Response.json({ success: true, data: result, mode, timestamp: new Date().toISOString() });
+    } catch (abortError) {
+      clearTimeout(timeout);
+      if (abortError instanceof Error && abortError.name === 'AbortError') {
+        return Response.json({ error: 'Analysis timed out. Please try again.' }, { status: 504 });
+      }
+      throw abortError;
+    }
   } catch (error) {
     console.error('[analyze]', error);
-    return Response.json({ error: error instanceof Error ? error.message : 'Analysis failed' }, { status: 500 });
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Analysis failed' },
+      { status: 500 }
+    );
   }
 }

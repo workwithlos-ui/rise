@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, TrendingUp, Info, Zap, RefreshCw, Filter, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
@@ -8,7 +8,7 @@ import type { Insight, Severity } from '@/lib/types';
 const T = { bg: '#050505', surface: '#111111', border: '#1a1a1a', accent: '#c8f542', accentDim: '#c8f54214', red: '#ff4444', amber: '#f5a623', green: '#22c55e', text: '#ffffff', sub: '#6b6b6b' };
 const NAV = [{ href: '/', label: 'Dashboard' }, { href: '/feed', label: 'Feed' }, { href: '/report', label: 'Report' }, { href: '/setup', label: 'Setup' }];
 
-const SEV_CONFIG: Record<Severity, { color: string; icon: any; label: string }> = {
+const SEV_CONFIG: Record<Severity, { color: string; icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>; label: string }> = {
   CRITICAL: { color: T.red, icon: AlertTriangle, label: 'Critical' },
   WARNING: { color: T.amber, icon: AlertTriangle, label: 'Warning' },
   OPPORTUNITY: { color: T.accent, icon: TrendingUp, label: 'Opportunity' },
@@ -25,27 +25,108 @@ const FILTERS: Array<{ key: Severity | 'ALL'; label: string }> = [
 
 export default function Feed() {
   const [insights, setInsights] = useState<Insight[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
   const [filter, setFilter] = useState<Severity | 'ALL'>('ALL');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [ran, setRan] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load insights from API and localStorage on mount
+  useEffect(() => {
+    const loadInsights = async () => {
+      setLoading(true);
+      let allInsights: Insight[] = [];
+
+      // Try loading from the API first
+      try {
+        const res = await fetch('/api/insights');
+        const d = await res.json();
+        if (d.insights && Array.isArray(d.insights)) {
+          allInsights = d.insights;
+        }
+      } catch (e) {
+        console.warn('Failed to load insights from API:', e);
+      }
+
+      // Also load from localStorage as fallback/supplement
+      try {
+        const stored = JSON.parse(localStorage.getItem('rise_insights') || '[]');
+        if (Array.isArray(stored) && stored.length > 0) {
+          // Merge: use API insights first, then add any localStorage ones not already present
+          const apiIds = new Set(allInsights.map(i => i.id));
+          const localOnly = stored.filter((i: Insight) => !apiIds.has(i.id));
+          allInsights = [...allInsights, ...localOnly];
+        }
+      } catch (e) {
+        console.warn('Failed to load insights from localStorage:', e);
+      }
+
+      setInsights(allInsights);
+      setLoading(false);
+    };
+
+    loadInsights();
+  }, []);
 
   const runAnalysis = async () => {
-    setLoading(true);
+    setGenerating(true);
+    setError(null);
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'insights' }) });
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'insights' }),
+      });
       const d = await res.json();
-      if (d.data && Array.isArray(d.data)) {
-        const mapped = d.data.map((item: Insight, i: number) => ({ ...item, id: `insight-${Date.now()}-${i}`, created_at: new Date().toISOString() }));
-        setInsights(prev => [...mapped, ...prev]);
-        setRan(true);
+
+      if (!res.ok) {
+        setError(d.error || 'Analysis failed');
+        setGenerating(false);
+        return;
       }
-    } catch (e) { console.error(e); }
-    setLoading(false);
+
+      if (d.data && Array.isArray(d.data)) {
+        const mapped = d.data.map((item: Insight, i: number) => ({
+          ...item,
+          id: `insight-${Date.now()}-${i}`,
+          created_at: new Date().toISOString(),
+        }));
+
+        const updated = [...mapped, ...insights].slice(0, 50);
+        setInsights(updated);
+
+        // Persist to API
+        try {
+          await fetch('/api/insights', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ insights: d.data, source: 'feed' }),
+          });
+        } catch (e) {
+          console.warn('Failed to persist insights:', e);
+        }
+
+        // Persist to localStorage
+        try {
+          localStorage.setItem('rise_insights', JSON.stringify(updated));
+        } catch (e) {
+          console.warn('localStorage save failed:', e);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Network error. Please try again.');
+    }
+    setGenerating(false);
   };
 
   const filtered = filter === 'ALL' ? insights : insights.filter(i => i.severity === filter);
-  const counts = { CRITICAL: insights.filter(i => i.severity === 'CRITICAL').length, WARNING: insights.filter(i => i.severity === 'WARNING').length, OPPORTUNITY: insights.filter(i => i.severity === 'OPPORTUNITY').length, INFO: insights.filter(i => i.severity === 'INFO').length };
+  const counts = {
+    CRITICAL: insights.filter(i => i.severity === 'CRITICAL').length,
+    WARNING: insights.filter(i => i.severity === 'WARNING').length,
+    OPPORTUNITY: insights.filter(i => i.severity === 'OPPORTUNITY').length,
+    INFO: insights.filter(i => i.severity === 'INFO').length,
+  };
 
   return (
     <div style={{ minHeight: '100vh', background: T.bg, color: T.text, fontFamily: 'DM Sans, sans-serif' }}>
@@ -56,14 +137,20 @@ export default function Feed() {
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '36px 28px 80px' }}>
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 14 }}>
           <div>
-            <span style={{ fontSize: 10, color: T.accent, fontFamily: 'DM Mono, monospace', letterSpacing: '0.15em', display: 'block', marginBottom: 8 }}>INTELLIGENCE FEED</span>
+            <span style={{ fontSize: 10, color: T.accent, fontFamily: 'DM Mono, monospace', letterSpacing: '0.15em', display: 'block', marginBottom: 8 }}>GRIP INTELLIGENCE FEED</span>
             <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>Insights</h1>
-            <p style={{ fontSize: 13, color: T.sub, marginTop: 5 }}>AI-generated business intelligence, ranked by severity.</p>
+            <p style={{ fontSize: 13, color: T.sub, marginTop: 5 }}>AI-generated business intelligence scored by GRIP (Gravity, Reach, Impact, Proof).</p>
           </div>
-          <button onClick={runAnalysis} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px', background: loading ? T.border : T.accent, color: loading ? T.sub : T.bg, borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: loading ? 'not-allowed' : 'pointer', border: 'none', letterSpacing: '0.06em' }}>
-            {loading ? <><RefreshCw size={13} className="spin" />ANALYZING</> : <><Zap size={13} />GENERATE INSIGHTS</>}
+          <button onClick={runAnalysis} disabled={generating} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px', background: generating ? T.border : T.accent, color: generating ? T.sub : T.bg, borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: generating ? 'not-allowed' : 'pointer', border: 'none', letterSpacing: '0.06em' }}>
+            {generating ? <><RefreshCw size={13} className="spin" />ANALYZING</> : <><Zap size={13} />GENERATE INSIGHTS</>}
           </button>
         </motion.div>
+
+        {error && (
+          <div style={{ padding: '12px 16px', background: `${T.red}15`, border: `1px solid ${T.red}30`, borderRadius: 8, marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: T.red }}>{error}</p>
+          </div>
+        )}
 
         {insights.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -82,18 +169,23 @@ export default function Feed() {
           </div>
         )}
 
-        {!ran && !loading && (
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, flexDirection: 'column', gap: 14 }}>
+            <RefreshCw size={22} style={{ color: T.accent }} className="spin" />
+            <p style={{ color: T.sub, fontSize: 12, fontFamily: 'DM Mono, monospace', letterSpacing: '0.08em' }}>LOADING INSIGHTS</p>
+          </div>
+        ) : insights.length === 0 && !generating ? (
           <div style={{ textAlign: 'center', padding: '60px 20px', background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12 }}>
             <Zap size={32} style={{ color: T.accent, margin: '0 auto 14px' }} />
             <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>No insights yet</p>
-            <p style={{ fontSize: 13, color: T.sub, marginBottom: 20 }}>Generate your first analysis to see intelligence insights here.</p>
+            <p style={{ fontSize: 13, color: T.sub, marginBottom: 20 }}>Run analysis from the Dashboard or generate insights here to populate your feed.</p>
             <button onClick={runAnalysis} style={{ padding: '9px 20px', background: T.accent, color: T.bg, borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: 'pointer', border: 'none' }}>Generate Now</button>
           </div>
-        )}
+        ) : null}
 
         <AnimatePresence>
           {filtered.map((insight, i) => {
-            const cfg = SEV_CONFIG[insight.severity];
+            const cfg = SEV_CONFIG[insight.severity] ?? SEV_CONFIG.INFO;
             const Icon = cfg.icon;
             const isOpen = expanded === insight.id;
             return (

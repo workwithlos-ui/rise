@@ -12,25 +12,47 @@ function getClient(): SupabaseClient {
 }
 
 export async function getSharedContext() {
-  const { data, error } = await getClient().from('shared_context').select('*').limit(1).single();
-  if (error) { console.warn('[supabase] shared_context:', error.message); return null; }
+  const { data, error } = await getClient()
+    .from('shared_context')
+    .select('*')
+    .limit(1)
+    .single();
+  if (error) {
+    console.warn('[supabase] shared_context:', error.message);
+    return null;
+  }
   return data;
 }
 
 export async function getLatestMetrics(limit = 2) {
-  const { data, error } = await getClient().from('rise_metrics').select('*').order('created_at', { ascending: false }).limit(limit);
-  if (error) { console.warn('[supabase] rise_metrics:', error.message); return []; }
+  const { data, error } = await getClient()
+    .from('rise_metrics')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.warn('[supabase] rise_metrics:', error.message);
+    return [];
+  }
   return data ?? [];
 }
 
-export async function saveMetrics(metrics: Record<string, number | string | undefined>) {
-  const { data, error } = await getClient().from('rise_metrics').insert([metrics]).select().single();
+export async function saveMetrics(metrics: Record<string, number | string | null | undefined>) {
+  const { data, error } = await getClient()
+    .from('rise_metrics')
+    .insert([metrics])
+    .select()
+    .single();
   if (error) throw new Error(error.message);
   return data;
 }
 
 export async function getMetricsHistory(limit = 12) {
-  const { data, error } = await getClient().from('rise_metrics').select('*').order('created_at', { ascending: false }).limit(limit);
+  const { data, error } = await getClient()
+    .from('rise_metrics')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
   if (error) return [];
   return data ?? [];
 }

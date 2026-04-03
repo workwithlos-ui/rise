@@ -1,4 +1,4 @@
-// RISE — Industry benchmarks for gap analysis
+// RISE - Industry benchmarks for gap analysis (GRIP scored)
 // Every metric RISE tracks gets compared to real industry averages
 
 export interface Benchmark {

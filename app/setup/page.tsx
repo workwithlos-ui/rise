@@ -9,14 +9,13 @@ const NAV = [{ href: '/', label: 'Dashboard' }, { href: '/feed', label: 'Feed' }
 
 const FIELDS = [
   { key: 'monthly_revenue', label: 'Monthly Revenue', placeholder: '50000', required: true, prefix: '$' },
-  { key: 'ad_spend', label: 'Monthly Ad Spend', placeholder: '8000', prefix: '$' },
-  { key: 'ltv', label: 'Customer LTV', placeholder: '8400', prefix: '$' },
-  { key: 'cac', label: 'Customer Acquisition Cost (CAC)', placeholder: '450', prefix: '$' },
-  { key: 'churn_rate', label: 'Monthly Churn Rate', placeholder: '5', suffix: '%' },
+  { key: 'monthly_ad_spend', label: 'Monthly Ad Spend', placeholder: '8000', prefix: '$' },
+  { key: 'customer_ltv', label: 'Customer LTV', placeholder: '8400', prefix: '$' },
+  { key: 'customer_cac', label: 'Customer Acquisition Cost (CAC)', placeholder: '450', prefix: '$' },
+  { key: 'monthly_churn_rate', label: 'Monthly Churn Rate', placeholder: '5', suffix: '%' },
   { key: 'pipeline_value', label: 'Pipeline Value', placeholder: '125000', prefix: '$' },
   { key: 'close_rate', label: 'Close Rate', placeholder: '22', suffix: '%' },
   { key: 'avg_deal_size', label: 'Average Deal Size', placeholder: '8300', prefix: '$' },
-  { key: 'period_label', label: 'Period Label', placeholder: 'April 2026', isText: true },
   { key: 'notes', label: 'Notes (optional)', placeholder: 'Any context for this period...', isText: true },
 ];
 
@@ -32,7 +31,7 @@ export default function Setup() {
     try {
       const payload: Record<string, number | string> = {};
       for (const [k, v] of Object.entries(form)) {
-        if (v) payload[k] = ['period_label', 'notes'].includes(k) ? v : parseFloat(v);
+        if (v) payload[k] = k === 'notes' ? v : parseFloat(v);
       }
       const res = await fetch('/api/metrics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const d = await res.json();
@@ -54,7 +53,7 @@ export default function Setup() {
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} style={{ marginBottom: 32 }}>
           <span style={{ fontSize: 10, color: T.accent, fontFamily: 'DM Mono, monospace', letterSpacing: '0.15em', display: 'block', marginBottom: 10 }}>METRICS SETUP</span>
           <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 8 }}>Add a metrics snapshot</h1>
-          <p style={{ fontSize: 13, color: T.sub, lineHeight: 1.6 }}>Each submission creates a timestamped record. RISE compares periods to detect trends and anomalies.</p>
+          <p style={{ fontSize: 13, color: T.sub, lineHeight: 1.6 }}>Each submission creates a timestamped record. RISE compares periods to detect trends and anomalies using GRIP scoring (Gravity, Reach, Impact, Proof).</p>
         </motion.div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {FIELDS.map((f, i) => (
@@ -72,7 +71,7 @@ export default function Setup() {
         </div>
         {error && <p style={{ fontSize: 13, color: '#ff6666', marginTop: 16 }}>{error}</p>}
         <button onClick={save} disabled={saving} style={{ marginTop: 24, width: '100%', padding: '13px 0', background: saved ? T.accent : saving ? T.border : T.accent, color: T.bg, borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: saving ? 'not-allowed' : 'pointer', border: 'none', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          {saving ? <><Loader2 size={14} className="spin" />SAVING...</> : saved ? <><CheckCircle2 size={14} />SAVED — Go to Dashboard</> : 'SAVE METRICS SNAPSHOT'}
+          {saving ? <><Loader2 size={14} className="spin" />SAVING...</> : saved ? <><CheckCircle2 size={14} />SAVED - Go to Dashboard</> : 'SAVE METRICS SNAPSHOT'}
         </button>
         {saved && <Link href="/"><p style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: T.accent, cursor: 'pointer' }}>View Dashboard and run analysis</p></Link>}
       </main>

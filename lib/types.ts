@@ -1,16 +1,17 @@
 export interface Metrics {
-  id?: string;
+  id?: number;
+  context_key?: string;
+  monthly_revenue: number | null;
+  monthly_ad_spend?: number | null;
+  customer_ltv?: number | null;
+  customer_cac?: number | null;
+  monthly_churn_rate?: number | null;
+  pipeline_value?: number | null;
+  close_rate?: number | null;
+  avg_deal_size?: number | null;
+  snapshot_date?: string;
   created_at?: string;
-  period_label?: string;
-  monthly_revenue: number;
-  ad_spend?: number;
-  ltv?: number;
-  cac?: number;
-  churn_rate?: number;
-  pipeline_value?: number;
-  close_rate?: number;
-  avg_deal_size?: number;
-  notes?: string;
+  notes?: string | null;
 }
 
 export type Severity = 'CRITICAL' | 'WARNING' | 'OPPORTUNITY' | 'INFO';
@@ -27,12 +28,27 @@ export interface Insight {
   created_at: string;
 }
 
+export interface GRIPWeights {
+  gravity?: number;
+  reach?: number;
+  impact?: number;
+  proof?: number;
+  [key: string]: number | undefined;
+}
+
 export interface SharedContext {
-  business_info?: Record<string, string>;
+  id?: number;
+  context_key?: string;
+  business?: Record<string, string | number>;
   audiences?: Array<{ name: string; pain_points: string[]; goals: string[] }>;
-  proof_bank?: Array<{ result: string; client?: string; metric?: string }>;
-  voice?: { tone: string; rules: string[] };
-  offers?: Array<{ name: string; price: string; description: string }>;
+  proof_bank?: Array<{ id: string; type: string; client: string; metric: string; summary: string; strength: number }>;
+  voice?: Record<string, unknown>;
+  platform_specs?: Record<string, unknown>;
+  spcl_weights?: Record<string, number>;
+  offers?: Array<{ id: string; name: string; desc: string; setup: number; monthly: number }>;
+  constraints?: string[];
+  updated_at?: string;
+  created_at?: string;
 }
 
 export interface WeeklyReport {
