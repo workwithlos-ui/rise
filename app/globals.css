@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=DM+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { background: #050505; color: #ffffff; font-family: 'DM Sans', system-ui, sans-serif; }
+::selection { background: #c8f54240; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #111111; }
+::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #c8f542; }
+
+.mono { font-family: 'DM Mono', monospace; }
+.lime { color: #c8f542; }
+.text-sub { color: #6b6b6b; }
+.text-dim { color: #333333; }
+.card { background: #111111; border: 1px solid #1a1a1a; border-radius: 10px; }
+.card-hover:hover { border-color: #2a2a2a; transition: border-color 0.15s; }
+
+@keyframes pulse-lime { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.pulse-lime { animation: pulse-lime 2s ease-in-out infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
