@@ -23,6 +23,47 @@ const FILTERS: Array<{ key: Severity | 'ALL'; label: string }> = [
   { key: 'INFO', label: 'Info' },
 ];
 
+// Remove em dashes and en dashes from any string
+function sanitize(s: string | undefined): string {
+  if (!s) return '';
+  return s.replace(/\u2014/g, '-').replace(/\u2013/g, '-');
+}
+
+// Sanitize all text fields in an insight
+function sanitizeInsight(i: Insight): Insight {
+  return {
+    ...i,
+    title: sanitize(i.title),
+    body: sanitize(i.body),
+    action: sanitize(i.action),
+    metric: i.metric ? sanitize(i.metric) : i.metric,
+    benchmark: i.benchmark ? sanitize(i.benchmark) : i.benchmark,
+  };
+}
+
+// Normalize severity from various formats to standard uppercase
+function normalizeSeverity(sev: string): Severity {
+  const s = (sev || '').toUpperCase().trim();
+  if (s === 'CRITICAL' || s === 'RISK') return 'CRITICAL';
+  if (s === 'WARNING' || s === 'WATCH') return 'WARNING';
+  if (s === 'OPPORTUNITY') return 'OPPORTUNITY';
+  return 'INFO';
+}
+
+// Deduplicate insights by title similarity
+function deduplicateInsights(items: Insight[]): Insight[] {
+  const seen = new Set<string>();
+  const result: Insight[] = [];
+  for (const item of items) {
+    const key = (item.title || '').toLowerCase().trim().slice(0, 60);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
 export default function Feed() {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,7 +83,10 @@ export default function Feed() {
         const res = await fetch('/api/insights');
         const d = await res.json();
         if (d.insights && Array.isArray(d.insights)) {
-          allInsights = d.insights;
+          allInsights = d.insights.map((item: Insight) => ({
+            ...item,
+            severity: normalizeSeverity(item.severity),
+          }));
         }
       } catch (e) {
         console.warn('Failed to load insights from API:', e);
@@ -52,14 +96,18 @@ export default function Feed() {
       try {
         const stored = JSON.parse(localStorage.getItem('rise_insights') || '[]');
         if (Array.isArray(stored) && stored.length > 0) {
-          // Merge: use API insights first, then add any localStorage ones not already present
-          const apiIds = new Set(allInsights.map(i => i.id));
-          const localOnly = stored.filter((i: Insight) => !apiIds.has(i.id));
-          allInsights = [...allInsights, ...localOnly];
+          const normalized = stored.map((item: Insight) => ({
+            ...item,
+            severity: normalizeSeverity(item.severity),
+          }));
+          allInsights = [...allInsights, ...normalized];
         }
       } catch (e) {
         console.warn('Failed to load insights from localStorage:', e);
       }
+
+      // Deduplicate and sanitize em dashes
+      allInsights = deduplicateInsights(allInsights).map(sanitizeInsight);
 
       setInsights(allInsights);
       setLoading(false);
@@ -86,13 +134,14 @@ export default function Feed() {
       }
 
       if (d.data && Array.isArray(d.data)) {
-        const mapped = d.data.map((item: Insight, i: number) => ({
+        const mapped = d.data.map((item: Insight, i: number) => sanitizeInsight({
           ...item,
           id: `insight-${Date.now()}-${i}`,
+          severity: normalizeSeverity(item.severity),
           created_at: new Date().toISOString(),
         }));
 
-        const updated = [...mapped, ...insights].slice(0, 50);
+        const updated = deduplicateInsights([...mapped, ...insights]).slice(0, 50);
         setInsights(updated);
 
         // Persist to API
@@ -211,10 +260,12 @@ export default function Feed() {
                       style={{ padding: '0 20px 18px 62px', borderTop: `1px solid ${T.border}` }}>
                       <p style={{ fontSize: 13, color: T.sub, lineHeight: 1.65, marginTop: 14, marginBottom: 14 }}>{insight.body}</p>
                       {insight.benchmark && <p style={{ fontSize: 11, color: T.sub, fontFamily: 'DM Mono, monospace', marginBottom: 12 }}>BENCHMARK: {insight.benchmark}</p>}
-                      <div style={{ display: 'flex', gap: 8, padding: '11px 14px', background: cfg.color + '10', border: `1px solid ${cfg.color}20`, borderRadius: 7 }}>
-                        <ChevronRight size={12} style={{ color: cfg.color, marginTop: 2, flexShrink: 0 }} />
-                        <p style={{ fontSize: 13, color: cfg.color, lineHeight: 1.5 }}>{insight.action}</p>
-                      </div>
+                      {insight.action && (
+                        <div style={{ display: 'flex', gap: 8, padding: '11px 14px', background: cfg.color + '10', border: `1px solid ${cfg.color}20`, borderRadius: 7 }}>
+                          <ChevronRight size={12} style={{ color: cfg.color, marginTop: 2, flexShrink: 0 }} />
+                          <p style={{ fontSize: 13, color: cfg.color, lineHeight: 1.5 }}>{insight.action}</p>
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>
